@@ -95,25 +95,12 @@ def save_annotated_frame(frame) -> str:
 
 def detect_frame(frame, confidence_threshold: float | None = None) -> Dict[str, Any]:
     """Run pothole detection on a single frame and return the requested payload."""
-    model = load_model()
-    threshold = confidence_threshold if confidence_threshold is not None else Config.CONFIDENCE_THRESHOLD
-    results = model(frame, verbose=False)
-    boxes = results[0].boxes
-    best = None
-
-    for idx in range(len(boxes)):
-        confidence = float(boxes[idx].conf.item())
-        if confidence < threshold:
-            continue
-        xyxy = boxes[idx].xyxy.cpu().numpy().squeeze().astype(int).tolist()
-        class_index = int(boxes[idx].cls.item())
-        label = str(model.names[class_index])
-        candidate = {"confidence": confidence, "bbox": xyxy, "label": label}
-        if best is None or candidate["confidence"] > best["confidence"]:
-            best = candidate
-
-    timestamp = datetime.now().isoformat()
-    if best is None:
+    try:
+        model = load_model()
+    except Exception as e:
+        timestamp = datetime.now().isoformat()
+        if Config.DEBUG_MODE:
+            print(f"[ERROR] Detection failed: {e}")
         return {
             "detected": False,
             "confidence": 0.0,
@@ -123,8 +110,89 @@ def detect_frame(frame, confidence_threshold: float | None = None) -> Dict[str, 
             "timestamp": timestamp,
             "severity": "Low",
         }
+        
+    threshold = confidence_threshold if confidence_threshold is not None else Config.CONFIDENCE_THRESHOLD
+    h, w, _ = frame.shape
+    results = model(frame, conf=threshold, verbose=False)
+    boxes = results[0].boxes
+    best = None
+    
+    min_area = w * h * Config.MIN_BBOX_AREA_RATIO
+    max_area = w * h * Config.MAX_BBOX_AREA_RATIO
 
-    annotated = annotate_frame(frame.copy(), best["bbox"], best["label"], best["confidence"])
+    reasons = {
+        "top": 0,
+        "min_area": 0,
+        "max_area": 0,
+        "aspect": 0,
+        "kept": 0
+    }
+
+    for idx in range(len(boxes)):
+        confidence = float(boxes[idx].conf.item())
+        xyxy = boxes[idx].xyxy.cpu().numpy().squeeze().astype(int).tolist()
+        x1, y1, x2, y2 = xyxy
+        
+        # 1. Filter: Ignore top percentage of image (e.g., sky, horizon)
+        center_y = (y1 + y2) / 2
+        if center_y < h * Config.IGNORE_TOP_PERCENTAGE:
+            reasons["top"] += 1
+            continue
+            
+        # 2. Filter: Ignore very small bounding boxes (noise)
+        bbox_area = (x2 - x1) * (y2 - y1)
+        if bbox_area < min_area:
+            reasons["min_area"] += 1
+            continue
+
+        # 3. Filter: Ignore very large bounding boxes (e.g., face close to camera)
+        if bbox_area > max_area:
+            reasons["max_area"] += 1
+            continue
+            
+        # 4. Filter: Aspect Ratio (Height / Width). Potholes are usually wider.
+        bbox_width = max(1, x2 - x1)  # Prevent division by zero
+        bbox_height = y2 - y1
+        aspect_ratio = bbox_height / bbox_width
+        if aspect_ratio > Config.MAX_ASPECT_RATIO:
+            reasons["aspect"] += 1
+            continue
+
+        reasons["kept"] += 1
+        label = str(model.names[int(boxes[idx].cls.item())])
+        candidate = {
+            "confidence": confidence,
+            "bbox": xyxy,
+            "label": label
+            }
+        if best is None or candidate["confidence"] > best["confidence"]:
+            best = candidate
+
+    if Config.DEBUG_MODE:
+        print(f"[DEBUG] Total Detections: {len(boxes)} | Stats: {reasons}")
+
+    timestamp = datetime.now().isoformat()
+    
+    # Render frame and debug info
+    annotated = frame.copy()
+    if best is not None:
+        annotated = annotate_frame(annotated, best["bbox"], best["label"], best["confidence"])
+        
+    if Config.DEBUG_MODE:
+        filtered = len(boxes) - reasons["kept"]
+        cv2.putText(annotated, f"Total: {len(boxes)} | Filtered: {filtered} | Kept: {reasons['kept']}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+    if best is None:
+        return {
+            "detected": False,
+            "confidence": 0.0,
+            "bbox": [],
+            "image_path": "",
+            "annotated_frame": annotated,
+            "timestamp": timestamp,
+            "severity": "Low",
+        }
+
     image_path = save_annotated_frame(annotated)
     return {
         "detected": True,

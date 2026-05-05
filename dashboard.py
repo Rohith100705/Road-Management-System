@@ -5,7 +5,7 @@ from datetime import datetime
 
 from flask import Response
 
-from storage import (
+from utils.storage import (
     get_all_potholes,
     get_counts,
     get_hourly_counts,
@@ -587,6 +587,20 @@ def _build_layout():
                             "gap": "16px", "marginBottom": "28px",
                         },
                     ),
+                    # ── Live Map ─────────────────────────────
+                    _section_header("Live Map", "Real-time pothole locations", COLORS["blue"]),
+                    html.Div(
+                        html.Iframe(
+                            src="/map",
+                            style={
+                                "width": "100%",
+                                "height": "500px",
+                                "border": "none",
+                                "borderRadius": "8px"
+                            }
+                        ),
+                        style=_panel_style(),
+                        ),
 
                     # ── Zone Progress ─────────────────────────────
                     _section_header("Zone Repair Progress", "District-level remediation", COLORS["india_green"]),
@@ -627,10 +641,12 @@ def _build_layout():
                                     {"name": "Type", "id": "hazard_type"},
                                     {"name": "Zone", "id": "zone"},
                                     {"name": "Address", "id": "address"},
-                                    {"name": "Severity", "id": "severity"},
+                                    {"name": "Rank/Score", "id": "priority_score"},
+                                    {"name": "Detections", "id": "detection_count"},
                                     {"name": "Status", "id": "status"},
+                                    {"name": "AI Verification", "id": "verification_status"},
                                     {"name": "Maps", "id": "maps_link", "presentation": "markdown"},
-                                    {"name": "Timestamp", "id": "timestamp"},
+                                    {"name": "First Seen", "id": "timestamp"},
                                 ],
                                 style_as_list_view=True,
                                 style_header={
@@ -656,16 +672,26 @@ def _build_layout():
                                 },
                                 style_data_conditional=[
                                     {
-                                        "if": {"filter_query": '{status} = "Pending"'},
+                                        "if": {"filter_query": '{status} = "Pending"', "column_id": "status"},
                                         "color": COLORS["red"],
                                     },
                                     {
-                                        "if": {"filter_query": '{status} = "Fixed"'},
+                                        "if": {"filter_query": '{status} = "Fixed"', "column_id": "status"},
                                         "color": COLORS["india_green"],
                                     },
                                     {
-                                        "if": {"filter_query": '{status} = "In Progress"'},
+                                        "if": {"filter_query": '{status} = "In Progress"', "column_id": "status"},
                                         "color": COLORS["amber"],
+                                    },
+                                    {
+                                        "if": {"filter_query": '{verification_status} = "Verified"', "column_id": "verification_status"},
+                                        "color": COLORS["india_green"],
+                                        "fontWeight": "bold",
+                                    },
+                                    {
+                                        "if": {"filter_query": '{verification_status} = "Auto-Resolved"', "column_id": "verification_status"},
+                                        "color": COLORS["blue"],
+                                        "fontWeight": "bold",
                                     },
                                     {
                                         "if": {"row_index": "odd"},

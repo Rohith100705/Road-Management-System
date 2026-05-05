@@ -1,7 +1,0 @@
-python yolo_detect.py --model "models/HIGH Accurate Model" --source "Test/Pothole Exp1.mp4"
-
-
-python yolo_detect.py --model "models/HIGH Accurate Model" --source "usb0" --resolution 640x480
-
-
-python yolo_detect.py --model "models/HIGH Accurate Model" --source "Test/1.png"

@@ -5,8 +5,8 @@ from typing import Any, Dict
 from flask import Flask, jsonify, redirect, render_template_string, request
 from config import Config
 from dashboard import mount_dashboard
-from reporter import create_and_save_report
-from storage import (
+from utils.reporter import create_and_save_report
+from utils.storage import (
     get_all_potholes,
     get_counts,
     get_hourly_counts,
@@ -234,6 +234,25 @@ CAMERA_PAGE_TEMPLATE = r"""
 
         const DOT_OK  = '<span class="dot dot-green"></span>';
         const DOT_ERR = '<span class="dot dot-red"></span>';
+        
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let lastBuzz = 0;
+        function playBuzzer() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (Date.now() - lastBuzz < 1000) return; // 1s cooldown
+            lastBuzz = Date.now();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.4);
+        }
 
         function setStatus(msg, err) {
             statusEl.innerHTML = (err ? DOT_ERR : DOT_OK) + msg;
@@ -281,22 +300,70 @@ CAMERA_PAGE_TEMPLATE = r"""
 
         camSel.addEventListener('change', e => startCam(e.target.value));
 
+        let currentLat = 17.6868; // Global default fallback
+        let currentLng = 83.2185;
+        let locFound = false;
+
+        async function fetchIpLocation() {
+            try {
+                const res = await fetch('http://ip-api.com/json/');
+                const data = await res.json();
+                if (data.status === 'success') {
+                    currentLat = data.lat;
+                    currentLng = data.lon;
+                    console.log("Using IP-based location fallback:", data.city);
+                }
+            } catch(e) { console.error("IP fallback failed"); }
+        }
+
+        function fetchLocation() {
+            if (navigator.geolocation) {
+                 navigator.geolocation.getCurrentPosition(pos => {
+                      currentLat = pos.coords.latitude;
+                      currentLng = pos.coords.longitude;
+                      locFound = true;
+                 }, err => {
+                      if (!locFound) {
+                          console.log("Precise location denied/blocked. Trying IP fallback...");
+                          fetchIpLocation();
+                          locFound = true; // Prevent spamming IP fallback
+                      }
+                 }, { enableHighAccuracy: true });
+            } else {
+                 if (!locFound) { fetchIpLocation(); locFound = true; }
+            }
+        }
+        
+        fetchLocation();
+        setInterval(fetchLocation, 10000); // refresh location every 10 seconds
+
         /* ── Detection loop ────────────────────── */
         async function detect() {
             if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
             capCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
             const img = captureCanvas.toDataURL('image/jpeg', 0.8);
             try {
-                const r = await (await fetch(API, {
-                    method:'POST',
-                    headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({image:img})
-                })).json();
+                const response = await fetch(API, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        image: img,
+                        lat: currentLat,
+                        lng: currentLng
+                    })
+                });
+                const r = await response.json();
+                
                 ctx.clearRect(0, 0, overlay.width, overlay.height);
                 if (r.detected && r.bbox) {
                     const [x1,y1,x2,y2] = r.bbox;
                     detections++;
                     countEl.innerHTML = 'DETECTIONS: <strong>'+detections+'</strong>';
+                    
+                    if (r.severity === 'High') {
+                        playBuzzer();
+                    }
+                    
                     // Box
                     ctx.shadowColor = '{{ c.india_green }}';
                     ctx.shadowBlur = 10;
@@ -404,11 +471,13 @@ def register_routes(app: Flask) -> None:
         )
         return jsonify({"status": "saved", "report": report}), 201
 
+
     @app.get("/api/potholes")
     def api_potholes() -> Any:
         limit = request.args.get("limit", default=50, type=int)
         potholes = get_all_potholes(limit=limit)
         return jsonify({"count": len(potholes), "potholes": potholes})
+
 
     @app.get("/api/stats")
     def api_stats() -> Any:
@@ -416,16 +485,16 @@ def register_routes(app: Flask) -> None:
         total = counts.get("total", 0)
         fixed = counts.get("fixed", 0)
         fix_rate = round((fixed / total) * 100, 2) if total else 0.0
-        return jsonify(
-            {
-                **counts,
-                "fix_rate": fix_rate,
-                "hourly": get_hourly_counts(hours=8),
-                "zones": get_zone_counts(),
-                "status_counts": get_status_counts(),
-                "severity_counts": get_severity_counts(),
-            }
-        )
+
+        return jsonify({
+            **counts,
+            "fix_rate": fix_rate,
+            "hourly": get_hourly_counts(hours=8),
+            "zones": get_zone_counts(),
+            "status_counts": get_status_counts(),
+            "severity_counts": get_severity_counts(),
+        })
+
 
     @app.post("/api/fix/<pothole_id>")
     def api_fix(pothole_id: str) -> Any:
@@ -434,21 +503,22 @@ def register_routes(app: Flask) -> None:
             return jsonify({"status": "not_found"}), 404
         return jsonify({"status": "updated"})
 
+
     @app.get("/api/hotspots")
     def api_hotspots() -> Any:
         zones = get_zone_counts()
         hotspots = [zone for zone in zones if zone.get("count", 0) > 1]
         return jsonify(hotspots)
 
+
     @app.get("/api/health")
     def api_health() -> Any:
-        return jsonify(
-            {
-                "status": "ok",
-                "db": "connected" if Config.DB_CONNECTED else "fallback",
-                "model": get_model_status(),
-            }
-        )
+        return jsonify({
+            "status": "ok",
+            "db": "connected" if Config.DB_CONNECTED else "fallback",
+            "model": get_model_status(),
+        })
+
 
     @app.post("/api/detect_frame")
     def api_detect_frame() -> Any:
@@ -466,9 +536,11 @@ def register_routes(app: Flask) -> None:
             result = detect_frame(frame)
 
             if result.get("detected"):
+                lat = float(payload.get("lat", 0.0))
+                lng = float(payload.get("lng", 0.0))
                 report = create_and_save_report(
-                    lat=23.1764863,
-                    lng=80.0245077,
+                    lat=lat,
+                    lng=lng,
                     image_path=result["image_path"],
                     severity=result.get("severity", "Medium"),
                     confidence=result.get("confidence", 0.0),
@@ -477,25 +549,140 @@ def register_routes(app: Flask) -> None:
                     "detected": True,
                     "hazard_type": report['hazard_type'],
                     "confidence": result['confidence'],
-                    "bbox": result['bbox']
+                    "bbox": result['bbox'],
+                    "severity": result.get("severity", "Medium")
                 })
             else:
                 return jsonify({"detected": False})
+
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+
+    # ✅ Camera Route (FIXED POSITION)
     @app.get("/camera/start")
     def start_camera() -> Any:
-        """Render the GoI-themed live surveillance interface."""
         return render_template_string(CAMERA_PAGE_TEMPLATE, **_camera_context())
+
+
+    # ✅ Leaflet Map Route (NEW)
+    @app.get("/map")
+    def map_view():
+        return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RoadWatch AI - Live Map</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <style>
+        body { margin: 0; font-family: Arial; }
+        #map { height: 100vh; width: 100%; }
+
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="legend">
+    <b>Severity</b><br>
+    🔴 High<br>
+    🟠 Medium<br>
+    🟢 Low
+</div>
+
+<script>
+var map = L.map('map');
+
+// 🌍 Auto detect user location
+navigator.geolocation.getCurrentPosition(function(position) {
+    var lat = position.coords.latitude;
+    var lng = position.coords.longitude;
+
+    map.setView([lat, lng], 14);
+
+    // Mark your location
+    L.marker([lat, lng]).addTo(map)
+        .bindPopup("📍 You are here")
+        .openPopup();
+
+}, function() {
+    // ❗ fallback if user denies permission
+    map.setView([17.6868, 83.2185], 13);
+});
+
+// Map tiles
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+}).addTo(map);
+
+let markers = [];
+
+function loadPotholes() {
+    fetch('/api/potholes')
+    .then(res => res.json())
+    .then(data => {
+
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+
+        data.potholes.forEach(p => {
+
+            let color;
+            if (p.severity === "High") color = "red";
+            else if (p.severity === "Medium") color = "orange";
+            else color = "green";
+
+            let marker = L.circleMarker([p.lat, p.lng], {
+                radius: 8,
+                color: color,
+                fillOpacity: 0.8
+            }).addTo(map);
+
+            marker.bindPopup(`
+                <b>${p.hazard_type}</b><br>
+                📍 ${p.address}<br>
+                ⚠️ Severity: ${p.severity}<br>
+                🎯 Confidence: ${p.confidence}<br>
+                📌 Status: ${p.status}<br>
+                <a href="${p.maps_link}" target="_blank">Open Location</a>
+            `);
+
+            markers.push(marker);
+        });
+    });
+}
+
+// Load + refresh
+loadPotholes();
+setInterval(loadPotholes, 5000);
+</script>
+
+</body>
+</html>
+""")
+
 
     @app.get("/")
     def index() -> Any:
         return redirect("/dashboard/")
 
-
 app = create_app()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = int(os.environ.get("PORT", 8050))
+    app.run(host="0.0.0.0", port=port, debug=False, ssl_context='adhoc')
+

@@ -21,7 +21,12 @@ class Config:
     FLASK_PORT = int(os.getenv("FLASK_PORT", "8050"))
     HIGH_MODEL_PATH = os.getenv("HIGH_MODEL_PATH")
     LOW_MODEL_PATH = os.getenv("LOW_MODEL_PATH")
-    CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
+    CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
+    IGNORE_TOP_PERCENTAGE = float(os.getenv("IGNORE_TOP_PERCENTAGE", "0.3"))
+    MIN_BBOX_AREA_RATIO = float(os.getenv("MIN_BBOX_AREA_RATIO", "0.001"))
+    MAX_BBOX_AREA_RATIO = float(os.getenv("MAX_BBOX_AREA_RATIO", "0.5"))
+    MAX_ASPECT_RATIO = float(os.getenv("MAX_ASPECT_RATIO", "1.2"))
+    DEBUG_MODE = bool(os.getenv("DEBUG_MODE", "False") == "True")
     DETECTION_INTERVAL = int(os.getenv("DETECTION_INTERVAL", "10"))
     STATIC_IMAGE_DIR = BASE_DIR / "static" / "images"
     TEST_IMAGE_PATH = BASE_DIR / "Test" / "1.png"

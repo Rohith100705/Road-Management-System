@@ -1,112 +1,25 @@
 # ---------------------------
-# Virtual Environment
+# Python & Environments
 # ---------------------------
+__pycache__/
+*.pyc
 venv/
 .env/
 env/
-ENV/
 .venv/
-
-# ---------------------------
-# Environment variables
-# ---------------------------
 .env
-.env.*
-!.env.example
 
 # ---------------------------
-# Python cache
+# ML Models & Ultralytics
 # ---------------------------
-__pycache__/
-*.py[cod]
-*$py.class
-
-# ---------------------------
-# Logs
-# ---------------------------
-*.log
-logs/
-
-# ---------------------------
-# Databases
-# ---------------------------
-*.sqlite3
-*.db
-
-# ---------------------------
-# System files
-# ---------------------------
-.DS_Store
-Thumbs.db
-
-# ---------------------------
-# IDE
-# ---------------------------
-.vscode/
-.idea/
-*.swp
-
-# ---------------------------
-# Jupyter
-# ---------------------------
-.ipynb_checkpoints/
-
-# ---------------------------
-# Python build
-# ---------------------------
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# ---------------------------
-# Temporary files
-# ---------------------------
-*.tmp
-*.temp
-.cache/
-
-# ---------------------------
-# ML Models (very large)
-# ---------------------------
-models/
 *.pt
-*.pth
-*.onnx
-*.h5
-
-# ---------------------------
-# Datasets
-# ---------------------------
-datasets/
-data/
-
-# ---------------------------
-# Output / Generated files
-# ---------------------------
-outputs/
-runs/
-results/
-static/images/
-
-# ---------------------------
-# Ultralytics YOLO
-# ---------------------------
 runs/
 Ultralytics/
 
 # ---------------------------
-# Node (if frontend)
+# Project Specific
 # ---------------------------
+_backup/
+Dataset/
 node_modules/
-
-# ---------------------------
-# Testing / coverage
-# ---------------------------
-.coverage
-htmlcov/
-.pytest_cache/
-
-# ---------------------------
-# OS temporary
-# ---------------------------
+.DS_Store
